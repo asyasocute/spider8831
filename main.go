@@ -16,8 +16,6 @@ import (
 	_ "image/png"
 
 	_ "golang.org/x/image/bmp"
-	// _ "golang.org/x/image/ico"
-	// _ "golang.org/x/image/svg"
 	_ "golang.org/x/image/webp"
 
 	"github.com/gocolly/colly"
@@ -94,9 +92,7 @@ func main() {
 		log.Println("error:", e, r.Request.URL)
 	})
 
-	c.Visit("https://ranfren.neocities.org/")
-	// c.Visit("https://asyasocute.online/")
-	// c.Visit("https://lili.lgbt/en/")
+	c.Visit("https://replace_this_by_real_url")
 
 	c.Wait()
 }
