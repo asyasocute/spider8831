@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log"
+	"net/http"
 	"os"
-	"path"
-	"sync"
+	"strings"
+	"time"
 
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"log"
-	"net/http"
 
 	_ "golang.org/x/image/bmp"
 	// _ "golang.org/x/image/ico"
@@ -23,86 +23,80 @@ import (
 	"github.com/gocolly/colly"
 )
 
-// var mu sync.Mutex
-var wg sync.WaitGroup
-
 func main() {
 	c := colly.NewCollector(
-		colly.MaxDepth(2),
-		colly.Async(false),
+		colly.MaxDepth(5),
+		colly.Async(true),
 	)
+	os.MkdirAll("./tmp", 0755)
+	c.Limit(&colly.LimitRule{DomainGlob: "*.neocities.org", Parallelism: 4})
+	c.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 128})
 
-	// i := 0
-	c.Limit(&colly.LimitRule{DomainGlob: "*.neocities.org", Parallelism: 8})
+	c.WithTransport(&http.Transport{
+		TLSHandshakeTimeout: 15 * time.Second,
+	})
+	c.SetRequestTimeout(15 * time.Second)
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := e.Attr("href")
 		absoluteURL := e.Request.AbsoluteURL(link)
-		fmt.Println("link ", absoluteURL)
-		// c.Visit(absoluteURL)
+		// if !strings.Contains(absoluteURL, "neocities.org") {
+		// 	return
+		// }
 		e.Request.Visit(absoluteURL)
 	})
 
 	c.OnHTML("img[src]", func(e *colly.HTMLElement) {
-		link := e.Attr("src")
-		url := e.Request.AbsoluteURL(link)
-		absoluteURL := e.Request.AbsoluteURL(link)
-		wg.Add(1)
-
-		// go func(url string) {
-		defer wg.Done()
-		response, err := http.Get(url)
-		if err != nil {
-			fmt.Println("error??", err)
+		url := e.Request.AbsoluteURL(e.Attr("src"))
+		lower := strings.ToLower(url)
+		if strings.HasSuffix(lower, ".svg") || strings.HasSuffix(lower, ".ico") {
 			return
 		}
-		fileName := path.Base(url)
-		defer response.Body.Close()
-		data, err := io.ReadAll(response.Body)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read body %s: %v\n", url, err)
+		ctx := colly.NewContext()
+		ctx.Put("page", e.Request.URL.String())
+		e.Request.Visit(url)
+	})
+
+	c.OnResponse(func(r *colly.Response) {
+		if !strings.Contains(r.Headers.Get("Content-Type"), "image") {
 			return
 		}
-
+		sourcePage := r.Ctx.Get("page")
+		data, err := io.ReadAll(bytes.NewReader(r.Body))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to read body %s: %v\n", r.Request.URL, err)
+			return
+		}
 		m, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to get image %s: %v\n", url, err)
+			fmt.Fprintf(os.Stderr, "failed to get image %s: %v\n", r.Request.URL, err)
 			return
 		}
-
 		bounds := m.Bounds()
 		if bounds.Dx() == 88 && bounds.Dy() == 31 {
-			fmt.Println("found badge", fileName)
-			// mu.Lock()
-			// i += 1
-			// mu.Unlock()
-			c.Visit(absoluteURL)
-			file, err := os.Create("./tmp/" + fileName)
+			fmt.Println("found badge", r.Request.URL)
+
+			file, err := os.Create("./tmp/" + r.FileName())
 			if err != nil {
-				panic("failed to create file " + fileName)
+				panic("failed to create file " + r.FileName())
 			}
 			defer file.Close()
-
 			_, err = file.Write(data)
 			if err != nil {
-
+				log.Fatalln("failed write to file")
 			}
-
+			c.Visit(sourcePage)
 		}
-
-		// fmt.Printf("%s %d %d\n", link, m.Width, m.Height)
-		// e.Request.Visit(link)
-		// }(absoluteURL)
 	})
+
 	c.OnError(func(r *colly.Response, e error) {
-		log.Println("error:", e, r.Request.URL, string(r.Body))
+		// log.Println("error:", e, r.Request.URL, string(r.Body))
+		log.Println("error:", e, r.Request.URL)
 	})
 
-	// Start scraping on https://en.wikipedia.org
-	// c.Visit("https://ranfren.neocities.org/")
-	c.Visit("https://asyasocute.online/")
-	// c.Visit("http://localhost:4321/")
-	// Wait until threads are finished
+	c.Visit("https://ranfren.neocities.org/")
+	// c.Visit("https://asyasocute.online/")
+	// c.Visit("https://lili.lgbt/en/")
+
 	c.Wait()
-	wg.Wait()
 }
